@@ -23,12 +23,10 @@ public:
     auto lidar_qos_profile = rclcpp::QoS(rclcpp::KeepLast(1));
     lidar_qos_profile.reliability(rclcpp::ReliabilityPolicy::BestEffort);
     auto callback = std::bind(&SelfDrive::subscribe_scan, this, std::placeholders::_1);
-    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-      "/scan", lidar_qos_profile, callback);
+    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>("/scan", lidar_qos_profile, callback);
    
     auto vel_qos_profile = rclcpp::QoS(rclcpp::KeepLast(1));
-    pose_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(
-      "/cmd_vel", vel_qos_profile);
+    pose_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel", vel_qos_profile);
   }
 
   void subscribe_scan(const sensor_msgs::msg::LaserScan::SharedPtr scan)
@@ -42,8 +40,7 @@ public:
     pose_pub_->publish(vel);
   }
 
-  float get_scan_avg(const sensor_msgs::msg::LaserScan::SharedPtr scan,
-                     int start_angle, int end_angle)
+  float get_scan_avg(const sensor_msgs::msg::LaserScan::SharedPtr scan, int start_angle, int end_angle)
   {
     float sum = 0.0;
     int count = 0;
@@ -62,29 +59,27 @@ public:
         count++;
       }
     }
-
+   
     if (count == 0) return 0.0;
     return sum / count;
   }
 
-  void calculate_command(const sensor_msgs::msg::LaserScan::SharedPtr scan,
-                         geometry_msgs::msg::TwistStamped &vel)
+  void calculate_command(const sensor_msgs::msg::LaserScan::SharedPtr scan, geometry_msgs::msg::TwistStamped &vel)
   {
     float front_center = get_scan_avg(scan, -10, 10);
-
-    float left_area  = get_scan_avg(scan, 10, 50);
+    float left_area = get_scan_avg(scan, 10, 50);
     float right_area = get_scan_avg(scan, -50, -10);
-
-    float left_side  = get_scan_avg(scan, 85, 95);
+   
+    float left_side = get_scan_avg(scan, 85, 95);
     float right_side = get_scan_avg(scan, -95, -85);
 
-    float max_range = 4.0;
-
-    if (front_center <= 0.01) front_center = max_range;
-    if (left_area <= 0.01) left_area = max_range;
-    if (right_area <= 0.01) right_area = max_range;
-    if (left_side <= 0.01) left_side = max_range;
-    if (right_side <= 0.01) right_side = max_range;
+    float max_range = 3.5;
+   
+    if (front_center < 0.01) front_center = max_range;
+    if (left_area < 0.01) left_area = max_range;
+    if (right_area < 0.01) right_area = max_range;
+    if (left_side < 0.01) left_side = max_range;
+    if (right_side < 0.01) right_side = max_range;
 
     front_center = std::min(front_center, max_range);
     left_area = std::min(left_area, max_range);
@@ -95,24 +90,30 @@ public:
     if (front_center < 0.45)
     {
       vel.twist.linear.x = 0.0;
-
-      if (left_area > right_area)
-        vel.twist.angular.z = 0.5;
-      else
-        vel.twist.angular.z = -0.5;
+     
+      if (left_area > right_area) vel.twist.angular.z = 0.5;
+      else vel.twist.angular.z = -0.5;
+    }
+    else if (left_side > 0.4 && right_side > 0.4)
+    {
+      vel.twist.linear.x = 0.15;
+      vel.twist.angular.z = 0.0;
     }
     else
     {
       vel.twist.linear.x = 0.15;
 
       float error = left_area - right_area;
-      float k_p = 1.6;
+      float k_p = 1.5;
 
       vel.twist.angular.z = error * k_p;
 
-      float max_turn = 0.8;
+      float max_turn = 0.7;
       if (vel.twist.angular.z > max_turn) vel.twist.angular.z = max_turn;
       if (vel.twist.angular.z < -max_turn) vel.twist.angular.z = -max_turn;
+     
+      RCLCPP_INFO(this->get_logger(), "F:%.2f L:%.2f R:%.2f SideL:%.2f SideR:%.2f",
+                  front_center, left_area, right_area, left_side, right_side);
     }
   }
 };
