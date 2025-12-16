@@ -48,7 +48,7 @@ public:
 
     for (int i = start_angle; i <= end_angle; ++i)
     {
-      int idx = (i < 0) ? size + i : i; // 음수 각도 처리
+      int idx = (i < 0) ? size + i : i;
       idx = idx % size;
       if (idx < 0) idx += size;
 
@@ -66,24 +66,26 @@ public:
 
   void calculate_command(const sensor_msgs::msg::LaserScan::SharedPtr scan, geometry_msgs::msg::TwistStamped &vel)
   {
-    
     float front_center = get_scan_avg(scan, -10, 10);
-
     float left_area = get_scan_avg(scan, 10, 50);
-
     float right_area = get_scan_avg(scan, -50, -10);
-
+    
+    float left_side = get_scan_avg(scan, 85, 95);
+    float right_side = get_scan_avg(scan, -95, -85);
 
     float max_range = 3.5; 
     
     if (front_center < 0.01) front_center = max_range;
     if (left_area < 0.01) left_area = max_range;
     if (right_area < 0.01) right_area = max_range;
+    if (left_side < 0.01) left_side = max_range;
+    if (right_side < 0.01) right_side = max_range;
 
     front_center = std::min(front_center, max_range);
     left_area = std::min(left_area, max_range);
     right_area = std::min(right_area, max_range);
-
+    left_side = std::min(left_side, max_range);
+    right_side = std::min(right_side, max_range);
 
     if (front_center < 0.45) 
     {
@@ -92,12 +94,16 @@ public:
       if (left_area > right_area) vel.twist.angular.z = 0.5;
       else vel.twist.angular.z = -0.5;
     }
+    else if (left_side > 0.4 && right_side > 0.4)
+    {
+      vel.twist.linear.x = 0.15;
+      vel.twist.angular.z = 0.0;
+    }
     else
     {
       vel.twist.linear.x = 0.15; 
 
       float error = left_area - right_area;
-      
       float k_p = 1.5; 
 
       vel.twist.angular.z = error * k_p;
@@ -106,8 +112,8 @@ public:
       if (vel.twist.angular.z > max_turn) vel.twist.angular.z = max_turn;
       if (vel.twist.angular.z < -max_turn) vel.twist.angular.z = -max_turn;
       
-      RCLCPP_INFO(this->get_logger(), "F:%.2f L_avg:%.2f R_avg:%.2f Ang:%.2f", 
-                  front_center, left_area, right_area, vel.twist.angular.z);
+      RCLCPP_INFO(this->get_logger(), "F:%.2f L:%.2f R:%.2f SideL:%.2f SideR:%.2f", 
+                  front_center, left_area, right_area, left_side, right_side);
     }
   }
 };
