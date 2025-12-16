@@ -5,7 +5,6 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
-#include <limits>
 
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -17,14 +16,9 @@ class SelfDrive : public rclcpp::Node
 {
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pose_pub_;
-  int step_;
-
-  const float TARGET_SPEED = 0.15f;
-  const float OBSTACLE_DISTANCE = 0.35f;
-  const float TURN_SPEED = 0.3f;
 
 public:
-  SelfDrive() : rclcpp::Node("self_drive"), step_(0)
+  SelfDrive() : rclcpp::Node("self_drive")
   {
     auto lidar_qos_profile = rclcpp::QoS(rclcpp::KeepLast(1));
     lidar_qos_profile.reliability(rclcpp::ReliabilityPolicy::BestEffort);
@@ -37,75 +31,84 @@ public:
 
   void subscribe_scan(const sensor_msgs::msg::LaserScan::SharedPtr scan)
   {
-    float front_dist = get_scan_min(scan, 0, 2);
-    float front_left = get_scan_min(scan, 358, 360);
-    front_dist = std::min(front_dist, front_left);
-
-    float left_dist = get_scan_min(scan, 85, 95);
-    float right_dist = get_scan_min(scan, 265, 275);
-
     geometry_msgs::msg::TwistStamped vel;
     vel.header.stamp = this->now();
     vel.header.frame_id = "base_link";
 
-    if (front_dist < OBSTACLE_DISTANCE)
-    {
-      handle_corner(vel, left_dist, right_dist);
-    }
-    else
-    {
-      follow_lane(vel, left_dist, right_dist);
-    }
+    calculate_command(scan, vel);
 
     pose_pub_->publish(vel);
-    step_++;
   }
 
-private:
-  float get_scan_min(const sensor_msgs::msg::LaserScan::SharedPtr scan, int start_angle, int end_angle)
+  float get_scan_avg(const sensor_msgs::msg::LaserScan::SharedPtr scan, int start_angle, int end_angle)
   {
-    float min_dist = std::numeric_limits<float>::infinity();
+    float sum = 0.0;
+    int count = 0;
     int size = scan->ranges.size();
 
-    for (int i = start_angle; i < end_angle; ++i)
+    for (int i = start_angle; i <= end_angle; ++i)
     {
-      int idx = i % size;
-      if (!std::isinf(scan->ranges[idx]) && scan->ranges[idx] > 0.01)
+      int idx = (i < 0) ? size + i : i; // 음수 각도 처리
+      idx = idx % size;
+      if (idx < 0) idx += size;
+
+      float r = scan->ranges[idx];
+      if (!std::isinf(r) && !std::isnan(r) && r > 0.01)
       {
-        if (scan->ranges[idx] < min_dist)
-        {
-          min_dist = scan->ranges[idx];
-        }
+        sum += r;
+        count++;
       }
     }
-    return min_dist;
+    
+    if (count == 0) return 0.0;
+    return sum / count;
   }
 
-  void handle_corner(geometry_msgs::msg::TwistStamped &vel, float left_dist, float right_dist)
+  void calculate_command(const sensor_msgs::msg::LaserScan::SharedPtr scan, geometry_msgs::msg::TwistStamped &vel)
   {
-    vel.twist.linear.x = 0.0;
     
-    if (left_dist > right_dist)
-      vel.twist.angular.z = TURN_SPEED;
+    float front_center = get_scan_avg(scan, -10, 10);
+
+    float left_area = get_scan_avg(scan, 10, 50);
+
+    float right_area = get_scan_avg(scan, -50, -10);
+
+
+    float max_range = 3.5; 
+    
+    if (front_center < 0.01) front_center = max_range;
+    if (left_area < 0.01) left_area = max_range;
+    if (right_area < 0.01) right_area = max_range;
+
+    front_center = std::min(front_center, max_range);
+    left_area = std::min(left_area, max_range);
+    right_area = std::min(right_area, max_range);
+
+
+    if (front_center < 0.45) 
+    {
+      vel.twist.linear.x = 0.0;
+      
+      if (left_area > right_area) vel.twist.angular.z = 0.5;
+      else vel.twist.angular.z = -0.5;
+    }
     else
-      vel.twist.angular.z = -TURN_SPEED;
-  }
+    {
+      vel.twist.linear.x = 0.15; 
 
-  void follow_lane(geometry_msgs::msg::TwistStamped &vel, float left_dist, float right_dist)
-  {
-    vel.twist.linear.x = TARGET_SPEED;
+      float error = left_area - right_area;
+      
+      float k_p = 1.5; 
 
-    if (std::isinf(left_dist)) left_dist = 2.0;
-    if (std::isinf(right_dist)) right_dist = 2.0;
+      vel.twist.angular.z = error * k_p;
 
-    float error = left_dist - right_dist;
-    float kp = 0.6; 
-
-    vel.twist.angular.z = kp * error;
-    
-    float max_ang = 0.8;
-    if (vel.twist.angular.z > max_ang) vel.twist.angular.z = max_ang;
-    if (vel.twist.angular.z < -max_ang) vel.twist.angular.z = -max_ang;
+      float max_turn = 0.7;
+      if (vel.twist.angular.z > max_turn) vel.twist.angular.z = max_turn;
+      if (vel.twist.angular.z < -max_turn) vel.twist.angular.z = -max_turn;
+      
+      RCLCPP_INFO(this->get_logger(), "F:%.2f L_avg:%.2f R_avg:%.2f Ang:%.2f", 
+                  front_center, left_area, right_area, vel.twist.angular.z);
+    }
   }
 };
 
