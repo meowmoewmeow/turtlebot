@@ -25,11 +25,12 @@ public:
     auto lidar_qos_profile = rclcpp::QoS(rclcpp::KeepLast(1));
     lidar_qos_profile.reliability(rclcpp::ReliabilityPolicy::BestEffort);
     auto callback = std::bind(&SelfDrive::subscribe_scan, this, std::placeholders::_1);
-    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>("/scan", lidar_qos_profile,
-                                                                       callback);
+    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+      "/scan", lidar_qos_profile, callback);
    
     auto vel_qos_profile = rclcpp::QoS(rclcpp::KeepLast(1));
-    pose_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel", vel_qos_profile);
+    pose_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(
+      "/cmd_vel", vel_qos_profile);
   }
 
   void subscribe_scan(const sensor_msgs::msg::LaserScan::SharedPtr scan)
@@ -54,6 +55,7 @@ public:
     {
       int idx = (i < 0) ? size + i : i;
       idx = idx % size;
+      if (idx < 0) idx += size;
 
       float r = scan->ranges[idx];
       if (!std::isinf(r) && !std::isnan(r) && r > 0.01)
@@ -67,41 +69,42 @@ public:
     return sum / count;
   }
 
-  void calculate_command(const sensor_msgs::msg::LaserScan::SharedPtr scan, geometry_msgs::msg::TwistStamped &vel)
+  void calculate_command(const sensor_msgs::msg::LaserScan::SharedPtr scan,
+                         geometry_msgs::msg::TwistStamped &vel)
   {
     float front_dist = get_scan_avg(scan, -10, 10);
-    float left_dist = get_scan_avg(scan, 80, 100);
-    float right_dist = get_scan_avg(scan, 260, 280);
+    float left_dist  = get_scan_avg(scan, 70, 110);
+    float right_dist = get_scan_avg(scan, 250, 290);
 
-    float max_range = 10.0;
-    if (front_dist == 0.0) front_dist = max_range;
-    if (left_dist == 0.0) left_dist = max_range;
-    if (right_dist == 0.0) right_dist = max_range;
+    float max_range = 5.0;
+    if (front_dist <= 0.01) front_dist = max_range;
+    if (left_dist <= 0.01) left_dist = max_range;
+    if (right_dist <= 0.01) right_dist = max_range;
 
-    if (front_dist < 0.4)
+    front_dist = std::min(front_dist, max_range);
+    left_dist  = std::min(left_dist, max_range);
+    right_dist = std::min(right_dist, max_range);
+
+    if (front_dist < 0.45)
     {
       vel.twist.linear.x = 0.0;
-     
+
       if (left_dist > right_dist)
-      {
-        vel.twist.angular.z = 0.5;
-      }
+        vel.twist.angular.z = 0.45;
       else
-      {
-        vel.twist.angular.z = -0.5;
-      }
+        vel.twist.angular.z = -0.45;
     }
     else
     {
       vel.twist.linear.x = 0.15;
-     
+
       float error = left_dist - right_dist;
-      float k_p = 2.0;
+      float k_p = 1.8;
 
       vel.twist.angular.z = error * k_p;
 
-      if (vel.twist.angular.z > 1.0) vel.twist.angular.z = 1.0;
-      if (vel.twist.angular.z < -1.0) vel.twist.angular.z = -1.0;
+      if (vel.twist.angular.z > 0.9) vel.twist.angular.z = 0.9;
+      if (vel.twist.angular.z < -0.9) vel.twist.angular.z = -0.9;
     }
   }
 };
