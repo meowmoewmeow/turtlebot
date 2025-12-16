@@ -9,7 +9,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
-#include <nav_msgs/msg/odometry.hpp>
 
 using namespace std::chrono_literals;
 
@@ -17,10 +16,9 @@ class SelfDrive : public rclcpp::Node
 {
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pose_pub_;
-  int step_;
 
 public:
-  SelfDrive() : rclcpp::Node("self_drive"), step_(0)
+  SelfDrive() : rclcpp::Node("self_drive")
   {
     auto lidar_qos_profile = rclcpp::QoS(rclcpp::KeepLast(1));
     lidar_qos_profile.reliability(rclcpp::ReliabilityPolicy::BestEffort);
@@ -42,10 +40,10 @@ public:
     calculate_command(scan, vel);
 
     pose_pub_->publish(vel);
-    step_++;
   }
 
-  float get_scan_avg(const sensor_msgs::msg::LaserScan::SharedPtr scan, int start_angle, int end_angle)
+  float get_scan_avg(const sensor_msgs::msg::LaserScan::SharedPtr scan,
+                     int start_angle, int end_angle)
   {
     float sum = 0.0;
     int count = 0;
@@ -64,7 +62,7 @@ public:
         count++;
       }
     }
-   
+
     if (count == 0) return 0.0;
     return sum / count;
   }
@@ -72,39 +70,49 @@ public:
   void calculate_command(const sensor_msgs::msg::LaserScan::SharedPtr scan,
                          geometry_msgs::msg::TwistStamped &vel)
   {
-    float front_dist = get_scan_avg(scan, -10, 10);
-    float left_dist  = get_scan_avg(scan, 70, 110);
-    float right_dist = get_scan_avg(scan, 250, 290);
+    float front_center = get_scan_avg(scan, -10, 10);
 
-    float max_range = 5.0;
-    if (front_dist <= 0.01) front_dist = max_range;
-    if (left_dist <= 0.01) left_dist = max_range;
-    if (right_dist <= 0.01) right_dist = max_range;
+    float left_area  = get_scan_avg(scan, 10, 50);
+    float right_area = get_scan_avg(scan, -50, -10);
 
-    front_dist = std::min(front_dist, max_range);
-    left_dist  = std::min(left_dist, max_range);
-    right_dist = std::min(right_dist, max_range);
+    float left_side  = get_scan_avg(scan, 85, 95);
+    float right_side = get_scan_avg(scan, -95, -85);
 
-    if (front_dist < 0.45)
+    float max_range = 4.0;
+
+    if (front_center <= 0.01) front_center = max_range;
+    if (left_area <= 0.01) left_area = max_range;
+    if (right_area <= 0.01) right_area = max_range;
+    if (left_side <= 0.01) left_side = max_range;
+    if (right_side <= 0.01) right_side = max_range;
+
+    front_center = std::min(front_center, max_range);
+    left_area = std::min(left_area, max_range);
+    right_area = std::min(right_area, max_range);
+    left_side = std::min(left_side, max_range);
+    right_side = std::min(right_side, max_range);
+
+    if (front_center < 0.45)
     {
       vel.twist.linear.x = 0.0;
 
-      if (left_dist > right_dist)
-        vel.twist.angular.z = 0.45;
+      if (left_area > right_area)
+        vel.twist.angular.z = 0.5;
       else
-        vel.twist.angular.z = -0.45;
+        vel.twist.angular.z = -0.5;
     }
     else
     {
       vel.twist.linear.x = 0.15;
 
-      float error = left_dist - right_dist;
-      float k_p = 1.8;
+      float error = left_area - right_area;
+      float k_p = 1.6;
 
       vel.twist.angular.z = error * k_p;
 
-      if (vel.twist.angular.z > 0.9) vel.twist.angular.z = 0.9;
-      if (vel.twist.angular.z < -0.9) vel.twist.angular.z = -0.9;
+      float max_turn = 0.8;
+      if (vel.twist.angular.z > max_turn) vel.twist.angular.z = max_turn;
+      if (vel.twist.angular.z < -max_turn) vel.twist.angular.z = -max_turn;
     }
   }
 };
